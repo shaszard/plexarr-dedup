@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Media Deduplicator</title>
+<style>
+/* ── Reset & base ── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:       #0f1117;
+  --surface:  #1a1d27;
+  --surface2: #22263a;
+  --border:   #2e3250;
+  --accent:   #6c63ff;
+  --accent2:  #8b5cf6;
+  --green:    #22c55e;
+  --red:      #ef4444;
+  --yellow:   #f59e0b;
+  --blue:     #3b82f6;
+  --text:     #e2e8f0;
+  --muted:    #64748b;
+  --sidebar:  200px;
+}
+html,body{height:100%;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:var(--bg);color:var(--text);line-height:1.5}
+a{color:inherit;text-decoration:none}
+button{cursor:pointer;font-family:inherit;font-size:inherit}
+input,textarea{font-family:inherit;font-size:inherit}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ── Layout ── */
+#app{display:flex;height:100vh;overflow:hidden}
+
+/* ── Sidebar ── */
+#sidebar{
+  width:var(--sidebar);min-width:var(--sidebar);
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+}
+.logo{padding:20px 16px;border-bottom:1px solid var(--border)}
+.logo h1{font-size:16px;font-weight:700;color:#fff}
+.logo p{font-size:11px;color:var(--muted);margin-top:2px}
+nav{flex:1;padding:12px 8px}
+.nav-btn{
+  display:flex;align-items:center;gap:10px;width:100%;
+  padding:10px 12px;border-radius:8px;border:none;background:none;
+  color:var(--muted);font-weight:500;transition:all .15s;margin-bottom:2px;
+}
+.nav-btn:hover{background:var(--surface2);color:var(--text)}
+.nav-btn.active{background:var(--accent);color:#fff}
+.nav-btn .icon{font-size:16px;width:20px;text-align:center}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+
+/* ── Main ── */
+#main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.view{display:none;flex:1;overflow-y:auto;padding:28px 32px}
+.view.active{display:block}
+
+/* ── Typography ── */
+h2{font-size:20px;font-weight:700;color:#fff;margin-bottom:6px}
+h3{font-size:15px;font-weight:600;color:#fff;margin-bottom:12px}
+.subtitle{color:var(--muted);margin-bottom:24px;font-size:13px}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px}
+
+/* ── Form ── */
+.field{margin-bottom:16px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.field input,.field textarea{
+  width:100%;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;padding:9px 12px;color:var(--text);outline:none;transition:border-color .15s;
+}
+.field input:focus,.field textarea:focus{border-color:var(--accent)}
+.field textarea{resize:vertical;min-height:80px;font-size:13px}
+.field .hint{font-size:11px;color:var(--muted);margin-top:4px}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+/* ── Buttons ── */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:8px 18px;border-radius:8px;border:1px solid transparent;
+  font-weight:600;transition:all .15s;
+}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-primary:hover{background:var(--accent2)}
+.btn-ghost{background:none;color:var(--muted);border-color:var(--border)}
+.btn-ghost:hover{background:var(--surface2);color:var(--text)}
+.btn-danger{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-danger:hover{opacity:.85}
+.btn-green{background:var(--green);color:#fff;border-color:var(--green)}
+.btn-green:hover{opacity:.85}
+.btn-sm{padding:5px 12px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Status badges ── */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.badge-sonarr{background:#1e3a5f;color:#60a5fa}
+.badge-radarr{background:#3b1e1e;color:#f87171}
+.badge-official{background:#14532d;color:#4ade80}
+.badge-dup{background:#3b1a1a;color:#f87171}
+.badge-protected{background:#422006;color:#fb923c}
+.badge-unknown{background:var(--surface2);color:var(--muted)}
+.badge-plex{background:#1a1040;color:#e5c8ff}
+.badge-inferred{background:#1c1a05;color:#fcd34d}
+.badge-arr-override{background:#3d2200;color:#fb923c}
+.badge-4k{background:#1a1a3e;color:#a78bfa}
+.badge-1080{background:#0f2a1a;color:#4ade80}
+.badge-720{background:#2a200a;color:#fbbf24}
+.badge-sd{background:#1e1e1e;color:#94a3b8}
+.mode-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;border:2px solid var(--border);font-size:13px;cursor:pointer;transition:all .15s;user-select:none}
+.mode-pill input{display:none}
+.mode-pill.selected{border-color:var(--accent);background:rgba(108,99,255,.12);color:#fff}
+.mode-pill:not(.selected){color:var(--muted)}
+.mode-pill:hover:not(.selected){border-color:var(--muted)}
+
+/* ── Connection test ── */
+.conn-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--border)}
+.conn-dot.ok{background:var(--green)}
+.conn-dot.fail{background:var(--red)}
+.conn-dot.checking{background:var(--yellow);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Log terminal ── */
+.terminal{
+  background:#0a0c14;border:1px solid var(--border);border-radius:8px;
+  padding:14px;font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;
+  height:280px;overflow-y:auto;color:#a0aec0;
+}
+.terminal .line{padding:1px 0}
+.terminal .line.ok{color:var(--green)}
+.terminal .line.err{color:var(--red)}
+.terminal .line.warn{color:var(--yellow)}
+.terminal .line.info{color:var(--blue)}
+.terminal .line.head{color:#fff;font-weight:700}
+
+/* ── Progress bar ── */
+.progress-wrap{background:var(--surface2);border-radius:4px;height:6px;margin-top:8px;overflow:hidden}
+.progress-bar{height:100%;border-radius:4px;background:var(--accent);transition:width .3s;width:0}
+
+/* ── Directory list ── */
+.dir-list{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.dir-item{
+  display:flex;align-items:center;gap:8px;background:var(--bg);
+  border:1px solid var(--border);border-radius:8px;padding:8px 12px;
+}
+.dir-item .dir-path{flex:1;font-family:monospace;font-size:12px;word-break:break-all}
+.dir-item .btn-remove{border:none;background:none;color:var(--muted);font-size:16px;line-height:1;padding:0 4px}
+.dir-item .btn-remove:hover{color:var(--red)}
+.dir-add-row{display:flex;gap:8px;align-items:center}
+.dir-add-row input{flex:1}
+.btn-browse{border-color:var(--accent);color:var(--accent);white-space:nowrap}
+.btn-browse:hover{background:var(--accent);color:#fff}
+
+/* ── Results table ── */
+.dup-group{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  margin-bottom:12px;overflow:hidden;
+}
+.dup-header{
+  display:flex;align-items:center;gap:10px;padding:12px 16px;
+  cursor:pointer;user-select:none;
+  border-bottom:1px solid var(--border);
+}
+.dup-header:hover{background:var(--surface2)}
+.dup-header .dup-name{flex:1;font-weight:600;color:#fff}
+.dup-header .dup-meta{font-size:12px;color:var(--muted)}
+.dup-header .chevron{color:var(--muted);transition:transform .2s;font-size:12px}
+.dup-group.open .chevron{transform:rotate(90deg)}
+.dup-body{display:none;padding:0}
+.dup-group.open .dup-body{display:block}
+
+.path-row{
+  display:flex;align-items:flex-start;gap:10px;padding:10px 16px;
+  border-bottom:1px solid var(--border);
+}
+.path-row:last-child{border-bottom:none}
+.path-row input[type=checkbox]{margin-top:3px;width:14px;height:14px;flex-shrink:0}
+.path-row .path-info{flex:1;min-width:0}
+.path-row .path-text{font-family:monospace;font-size:12px;word-break:break-all;color:var(--text);cursor:pointer;transition:color .15s}
+.path-row .path-text:hover{color:var(--accent);text-decoration:underline}
+.path-row .path-text::after{content:' ↗';font-size:10px;opacity:0;transition:opacity .15s}
+.path-row .path-text:hover::after{opacity:.6}
+.path-row .path-stats{font-size:11px;color:var(--muted);margin-top:3px}
+
+/* ── Stats bar ── */
+.stats-bar{
+  display:flex;gap:20px;padding:16px 20px;background:var(--surface);
+  border:1px solid var(--border);border-radius:10px;margin-bottom:20px;
+}
+.stat-item{text-align:center}
+.stat-item .val{font-size:22px;font-weight:700;color:var(--accent)}
+.stat-item .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+
+/* ── Cleanup controls ── */
+.cleanup-controls{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:20px;margin-bottom:20px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;
+}
+.control-group{display:flex;flex-direction:column;gap:6px}
+.control-group label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.toggle{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.toggle input{width:16px;height:16px;cursor:pointer}
+
+/* ── Log viewer ── */
+.log-list{display:flex;flex-direction:column;gap:6px;margin-bottom:20px}
+.log-entry{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+}
+.log-entry .log-name{flex:1;font-family:monospace;font-size:12px}
+.log-entry .log-meta{font-size:11px;color:var(--muted)}
+
+/* ── Notifications ── */
+.toast{
+  position:fixed;bottom:20px;right:20px;
+  background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+  padding:12px 18px;font-size:13px;z-index:1000;
+  animation:slideIn .2s ease;
+}
+.toast.ok{border-color:var(--green);color:var(--green)}
+.toast.err{border-color:var(--red);color:var(--red)}
+@keyframes slideIn{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* ── Empty state ── */
+.empty{text-align:center;padding:48px 24px;color:var(--muted)}
+.empty .icon{font-size:40px;margin-bottom:12px}
+.empty p{font-size:14px}
+
+/* ── Select row ── */
+.select-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.select-row .count{font-size:13px;color:var(--muted);margin-left:auto}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── Sidebar ──────────────────────────────────────── -->
+<aside id="sidebar">
+  <div class="logo">
+    <h1>🎬 Deduplicator</h1>
+    <p>Sonarr · Radarr companion</p>
+  </div>
+  <nav>
+    <button class="nav-btn active" data-view="config">
+      <span class="icon">⚙️</span> Configuration
+    </button>
+    <button class="nav-btn" data-view="scan">
+      <span class="icon">🔍</span> Scan
+    </button>
+    <button class="nav-btn" data-view="results" id="nav-results">
+      <span class="icon">📋</span> Results
+    </button>
+    <button class="nav-btn" data-view="logs">
+      <span class="icon">📄</span> Logs
+    </button>
+  </nav>
+  <div class="sidebar-footer">v2.0 · Media Deduplicator</div>
+</aside>
+
+<!-- ── Main ─────────────────────────────────────────── -->
+<main id="main">
+
+<!-- ════ CONFIG ═══════════════════════════════════════ -->
+<section class="view active" id="view-config">
+  <h2>Configuration</h2>
+  <p class="subtitle">Connect to Sonarr and Radarr, then add the directories you want to deduplicate.</p>
+
+  <!-- Sonarr -->
+  <div class="section">
+    <h3>📺 Sonarr</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>URL</label>
+        <input type="text" id="sonarr-url" placeholder="http://localhost:8989">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input type="text" id="sonarr-key" placeholder="Your Sonarr API key">
+      </div>
+    </div>
+    <div class="conn-row">
+      <div class="conn-dot" id="sonarr-dot"></div>
+      <span id="sonarr-status" style="font-size:12px;color:var(--muted)">Not tested</span>
+      <button class="btn btn-ghost btn-sm" onclick="testConn('sonarr')">Test</button>
+    </div>
+  </div>
+
+  <!-- Radarr -->
+  <div class="section">
+    <h3>🎬 Radarr</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>URL</label>
+        <input type="text" id="radarr-url" placeholder="http://localhost:7878">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input type="text" id="radarr-key" placeholder="Your Radarr API key">
+      </div>
+    </div>
+    <div class="conn-row">
+      <div class="conn-dot" id="radarr-dot"></div>
+      <span id="radarr-status" style="font-size:12px;color:var(--muted)">Not tested</span>
+      <button class="btn btn-ghost btn-sm" onclick="testConn('radarr')">Test</button>
+    </div>
+  </div>
+
+  <!-- Scan Directories -->
+  <div class="section">
+    <h3>📂 Directories to Scan</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Add every root media folder you want checked for duplicates (e.g. D:\Media\Movies, E:\Backup\TV).</p>
+    <div class="dir-list" id="scan-dirs"></div>
+    <div class="dir-add-row">
+      <button class="btn btn-ghost btn-browse" id="browse-scan-btn" onclick="browseFolder('scan')" title="Open folder picker">📂 Browse…</button>
+      <input type="text" id="new-scan-dir" placeholder="C:\Media\Movies  or  /mnt/media/movies" onkeydown="if(event.key==='Enter')addDir('scan')">
+      <button class="btn btn-ghost" onclick="addDir('scan')">+ Add</button>
+    </div>
+  </div>
+
+  <!-- Plex -->
+  <div class="section">
+    <h3>🎬 Plex Media Server <span style="font-size:11px;font-weight:400;color:var(--accent);background:rgba(108,99,255,.15);padding:2px 8px;border-radius:999px;margin-left:6px">Enhanced matching</span></h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">Plex-mode scan uses your actual library metadata (matched by IMDB/TMDB ID) instead of folder names — far more accurate, catches duplicates in completely different folder structures, and includes resolution/codec info for each copy.</p>
+    <div class="field-row">
+      <div class="field">
+        <label>Plex URL</label>
+        <input type="text" id="plex-url" placeholder="http://localhost:32400">
+      </div>
+      <div class="field">
+        <label>Plex Token <a href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/" target="_blank" style="color:var(--accent);font-size:11px;margin-left:6px">How to find →</a></label>
+        <input type="text" id="plex-token" placeholder="Your X-Plex-Token">
+      </div>
+    </div>
+    <div class="conn-row">
+      <div class="conn-dot" id="plex-dot"></div>
+      <span id="plex-status" style="font-size:12px;color:var(--muted)">Not tested</span>
+      <button class="btn btn-ghost btn-sm" onclick="testConn('plex')">Test</button>
+    </div>
+  </div>
+
+  <!-- Protected Dirs -->
+  <div class="section">
+    <h3>🛡️ Protected Directories</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">These paths will <strong>never</strong> be deleted, even if flagged as duplicates.<br>
+    <strong>Inherit</strong> — when checked, all subdirectories are also protected. Uncheck to protect only the exact directory (subdirectories can still be cleaned up).</p>
+    <div class="dir-list" id="protected-dirs"></div>
+    <div class="dir-add-row">
+      <button class="btn btn-ghost btn-browse" id="browse-prot-btn" onclick="browseFolder('prot')" title="Open folder picker">📂 Browse…</button>
+      <input type="text" id="new-prot-dir" placeholder="D:\Primary\TV  or  /media/Movies" onkeydown="if(event.key==='Enter')addDir('prot')">
+      <button class="btn btn-ghost" onclick="addDir('prot')">+ Add</button>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" onclick="saveConfig()">💾 Save Configuration</button>
+</section>
+
+<!-- ════ SCAN ══════════════════════════════════════════ -->
+<section class="view" id="view-scan">
+  <h2>Scan for Duplicates</h2>
+  <p class="subtitle">Choose a scan mode, then cross-reference with Sonarr/Radarr to identify the managed (official) copy.</p>
+
+  <!-- Scan mode -->
+  <div class="section">
+    <h3 style="margin-bottom:14px">Scan Mode</h3>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      <label class="mode-pill selected" id="pill-folder" onclick="setScanMode('folder')">
+        <input type="radio" name="scan-mode" value="folder" checked>
+        📂 Folder Name Matching
+      </label>
+      <label class="mode-pill" id="pill-plex" onclick="setScanMode('plex')">
+        <input type="radio" name="scan-mode" value="plex">
+        🎬 Plex Metadata <span style="font-size:10px;margin-left:4px;opacity:.7">(recommended)</span>
+      </label>
+    </div>
+    <div id="mode-desc-folder" style="font-size:12px;color:var(--muted)">
+      Finds subdirectories that share the same name across your scan directories. Fast but misses files with different folder structures.
+    </div>
+    <div id="mode-desc-plex" style="font-size:12px;color:var(--muted);display:none">
+      Uses Plex's library database to find items matched to the same IMDB/TMDB ID with multiple files. Catches duplicates anywhere on disk, and includes resolution, codec and bitrate for each copy. Requires Plex token in Configuration.
+    </div>
+
+    <!-- Folder-mode options -->
+    <div id="folder-opts" style="margin-top:14px;display:flex;gap:14px;flex-wrap:wrap">
+      <label class="toggle"><input type="checkbox" id="use-sonarr" checked> Cross-ref Sonarr</label>
+      <label class="toggle"><input type="checkbox" id="use-radarr" checked> Cross-ref Radarr</label>
+    </div>
+    <!-- Plex-mode options -->
+    <div id="plex-opts" style="margin-top:14px;flex-direction:column;gap:12px;display:none">
+
+      <!-- Scan type -->
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;min-width:80px">Scan</span>
+        <label class="toggle"><input type="checkbox" id="plex-scan-movies" checked> 🎬 Movies</label>
+        <label class="toggle"><input type="checkbox" id="plex-scan-shows" checked> 📺 TV Shows</label>
+      </div>
+
+      <!-- Cross-reference -->
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;min-width:80px">Cross-ref</span>
+        <label class="toggle"><input type="checkbox" id="plex-use-sonarr" checked> Sonarr</label>
+        <label class="toggle"><input type="checkbox" id="plex-use-radarr" checked> Radarr</label>
+      </div>
+
+      <!-- Quality preference -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;min-width:80px">Keep</span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <label class="mode-pill selected" id="qpill-best" onclick="setQualityPref('best')">
+            <input type="radio" name="quality-pref" value="best" checked> 🏆 Best quality
+          </label>
+          <label class="mode-pill" id="qpill-target" onclick="setQualityPref('target')">
+            <input type="radio" name="quality-pref" value="target"> 🎯 Target resolution
+          </label>
+          <label class="mode-pill" id="qpill-smallest" onclick="setQualityPref('smallest')">
+            <input type="radio" name="quality-pref" value="smallest"> 📦 Smallest acceptable
+          </label>
+        </div>
+        <select id="quality-target-res" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-size:13px">
+          <option value="2160">4K / 2160p</option>
+          <option value="1080" selected>1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+        </select>
+      </div>
+      <div id="quality-pref-hint" style="font-size:11px;color:var(--muted);padding-left:90px">
+        When no Sonarr/Radarr match exists, keeps the highest resolution copy (ties broken by file size).
+      </div>
+
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:20px">
+    <button class="btn btn-ghost" id="btn-clear-scan" onclick="clearScan()">Clear</button>
+    <button class="btn btn-primary" id="btn-start-scan" onclick="startScan()">🔍 Start Scan</button>
+  </div>
+
+  <div class="section">
+    <h3>Progress</h3>
+    <div class="terminal" id="scan-log"></div>
+  </div>
+</section>
+
+<!-- ════ RESULTS ══════════════════════════════════════ -->
+<section class="view" id="view-results">
+  <h2>Scan Results</h2>
+  <p class="subtitle">Review duplicate groups. Check the paths you want to remove, then run cleanup.</p>
+
+  <div id="results-empty" class="empty">
+    <div class="icon">🔍</div>
+    <p>No scan results yet. Run a scan first.</p>
+  </div>
+
+  <div id="results-content" style="display:none">
+    <!-- Stats -->
+    <div class="stats-bar" id="stats-bar"></div>
+
+    <!-- Cleanup controls -->
+    <div class="cleanup-controls">
+      <div class="control-group">
+        <label>Mode</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <label class="mode-pill selected" id="cpill-dry" onclick="setCleanupMode('dry')">
+            <input type="radio" name="cleanup-mode" value="dry" checked> 🔍 Dry Run
+          </label>
+          <label class="mode-pill" id="cpill-recycle" onclick="setCleanupMode('recycle')">
+            <input type="radio" name="cleanup-mode" value="recycle"> ♻️ Recycle Bin
+          </label>
+          <label class="mode-pill" id="cpill-delete" onclick="setCleanupMode('delete')">
+            <input type="radio" name="cleanup-mode" value="delete"> ⚠️ Permanent Delete
+          </label>
+        </div>
+        <div id="cleanup-mode-hint" style="font-size:11px;color:var(--muted);margin-top:6px">
+          Simulates the cleanup — nothing is moved or deleted.
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Filter path (optional)</label>
+        <input type="text" id="filter-pattern" placeholder="e.g. Movies  or  TV" style="width:200px">
+      </div>
+      <div class="control-group">
+        <label>Min size to delete</label>
+        <input type="text" id="min-size" placeholder="e.g. 100MB" style="width:120px">
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="selectAll()">Select All Dupes</button>
+        <button class="btn btn-ghost btn-sm" onclick="selectNone()">Deselect All</button>
+        <button class="btn btn-ghost btn-sm" onclick="showPreview()">📋 Preview</button>
+        <button class="btn btn-primary" id="btn-cleanup" onclick="startCleanup()">🧹 Run Cleanup</button>
+      </div>
+    </div>
+
+    <!-- Visual preview panel (shown on demand) -->
+    <div class="section" id="preview-section" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="margin:0">📋 Cleanup Preview — what will remain</h3>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('preview-section').style.display='none'">✕ Close</button>
+      </div>
+      <div id="preview-tree" style="font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;line-height:1.8"></div>
+    </div>
+
+    <!-- Cleanup log (hidden until run) -->
+    <div class="section" id="cleanup-section" style="display:none">
+      <h3>Cleanup Progress</h3>
+      <div class="terminal" id="cleanup-log"></div>
+    </div>
+
+    <!-- Duplicate groups -->
+    <div class="select-row">
+      <span id="group-count" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div id="dup-groups"></div>
+  </div>
+</section>
+
+<!-- ════ LOGS ══════════════════════════════════════════ -->
+<section class="view" id="view-logs">
+  <h2>Cleanup Logs</h2>
+  <p class="subtitle">Logs from past cleanup sessions.</p>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+    <button class="btn btn-ghost btn-sm" onclick="loadLogs()">↺ Refresh</button>
+  </div>
+  <div id="log-list"></div>
+  <div class="section" id="log-viewer" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 id="log-viewer-title" style="margin:0">Log</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeLogViewer()">✕ Close</button>
+    </div>
+    <div class="terminal" id="log-content" style="height:400px"></div>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   State
+════════════════════════════════════════════════════ */
+let scanJobId    = null;
+let cleanupJobId = null;
+let scanResults  = [];
+
+/* ═══════════════════════════════════════════════════
+   Navigation
+════════════════════════════════════════════════════ */
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-' + btn.dataset.view).classList.add('active');
+    if (btn.dataset.view === 'logs') loadLogs();
+  });
+});
+
+function goTo(view) {
+  document.querySelector(`[data-view="${view}"]`).click();
+}
+
+/* ═══════════════════════════════════════════════════
+   Toast
+════════════════════════════════════════════════════ */
+function toast(msg, type='ok', dur=3000) {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), dur);
+}
+
+/* ═══════════════════════════════════════════════════
+   Config
+════════════════════════════════════════════════════ */
+function setQualityPref(pref) {
+  ['best','target','smallest'].forEach(p =>
+    document.getElementById('qpill-' + p).classList.toggle('selected', p === pref)
+  );
+  document.querySelector(`input[name="quality-pref"][value="${pref}"]`).checked = true;
+  document.getElementById('quality-target-res').style.display = pref === 'target' ? '' : 'none';
+  const hints = {
+    best:     'When no Sonarr/Radarr match exists, keeps the highest resolution copy (ties broken by file size).',
+    target:   'Prefers the chosen resolution. If not available, picks the nearest match (steps up before stepping down).',
+    smallest: 'Keeps the smallest file that is still at least 720p — maximises recovered space while maintaining quality.',
+  };
+  document.getElementById('quality-pref-hint').textContent = hints[pref];
+}
+
+function setScanMode(mode) {
+  document.getElementById('pill-folder').classList.toggle('selected', mode === 'folder');
+  document.getElementById('pill-plex').classList.toggle('selected', mode === 'plex');
+  document.getElementById('mode-desc-folder').style.display = mode === 'folder' ? '' : 'none';
+  document.getElementById('mode-desc-plex').style.display   = mode === 'plex'   ? '' : 'none';
+  document.getElementById('folder-opts').style.display = mode === 'folder' ? 'flex' : 'none';
+  document.getElementById('plex-opts').style.display   = mode === 'plex'   ? 'flex' : 'none';
+  // sync radio
+  document.querySelector(`input[name="scan-mode"][value="${mode}"]`).checked = true;
+}
+
+async function loadConfig() {
+  try {
+    const cfg = await api('/api/config');
+    document.getElementById('sonarr-url').value  = cfg.sonarr?.url    || '';
+    document.getElementById('sonarr-key').value  = cfg.sonarr?.api_key || '';
+    document.getElementById('radarr-url').value  = cfg.radarr?.url    || '';
+    document.getElementById('radarr-key').value  = cfg.radarr?.api_key || '';
+    document.getElementById('plex-url').value    = cfg.plex?.url      || '';
+    document.getElementById('plex-token').value  = cfg.plex?.token    || '';
+
+    renderDirs('scan', cfg.scan_directories || []);
+  } catch(e) { console.error(e); }
+
+  try {
+    const pd = await api('/api/protected-dirs');
+    // API returns [{path, inherit}] objects; renderDirs('prot') expects same
+    renderDirs('prot', pd.protected_dirs || []);
+  } catch(e) { console.error(e); }
+}
+
+async function saveConfig() {
+  const cfg = {
+    sonarr: { url: val('sonarr-url'), api_key: val('sonarr-key') },
+    radarr: { url: val('radarr-url'), api_key: val('radarr-key') },
+    plex:   { url: val('plex-url'),   token:   val('plex-token') },
+    scan_directories: getDirs('scan'),
+  };
+  await api('/api/config', 'PUT', cfg);
+  // getDirs('prot') returns [{path, inherit}] objects — matches ProtectedDirEntry model
+  await api('/api/protected-dirs', 'PUT', { protected_dirs: getDirs('prot') });
+  toast('Configuration saved ✓');
+}
+
+async function testConn(svc) {
+  const dot    = document.getElementById(svc + '-dot');
+  const status = document.getElementById(svc + '-status');
+  dot.className = 'conn-dot checking';
+  status.textContent = 'Testing…';
+
+  // Save first so the test uses current values
+  const cfg = {
+    sonarr: { url: val('sonarr-url'), api_key: val('sonarr-key') },
+    radarr: { url: val('radarr-url'), api_key: val('radarr-key') },
+    plex:   { url: val('plex-url'),   token:   val('plex-token') },
+    scan_directories: getDirs('scan'),
+  };
+  await api('/api/config', 'PUT', cfg);
+
+  const res = await api(`/api/test/${svc}`);
+  dot.className = 'conn-dot ' + (res.ok ? 'ok' : 'fail');
+  status.textContent = res.message;
+}
+
+/* ── Dir lists ── */
+function renderDirs(type, dirs) {
+  const el = document.getElementById(type === 'scan' ? 'scan-dirs' : 'protected-dirs');
+  if (type === 'prot') {
+    el.innerHTML = dirs.map((d, i) => `
+      <div class="dir-item">
+        <label class="toggle" style="flex-shrink:0;gap:5px;font-size:11px;white-space:nowrap"
+               title="When checked, all subdirectories are also protected">
+          <input type="checkbox" onchange="toggleProtInherit(${i})" ${d.inherit ? 'checked' : ''}>
+          Inherit
+        </label>
+        <span class="dir-path" style="border-left:1px solid var(--border);margin-left:4px;padding-left:10px">${esc(d.path)}</span>
+        <button class="btn-remove" onclick="removeDir('prot',${i})">×</button>
+      </div>`).join('');
+  } else {
+    el.innerHTML = dirs.map((d, i) => `
+      <div class="dir-item">
+        <span class="dir-path">${esc(d)}</span>
+        <button class="btn-remove" onclick="removeDir('scan',${i})">×</button>
+      </div>`).join('');
+  }
+  el.dataset.dirs = JSON.stringify(dirs);
+}
+
+function getDirs(type) {
+  const el = document.getElementById(type === 'scan' ? 'scan-dirs' : 'protected-dirs');
+  return JSON.parse(el.dataset.dirs || '[]');
+}
+
+function toggleProtInherit(idx) {
+  const dirs = getDirs('prot');
+  dirs[idx].inherit = !dirs[idx].inherit;
+  renderDirs('prot', dirs);
+}
+
+async function browseFolder(type) {
+  const btnId = type === 'scan' ? 'browse-scan-btn' : 'browse-prot-btn';
+  const btn = document.getElementById(btnId);
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    const res = await api('/api/pick-folder');
+    if (res.path) {
+      const inputId = type === 'scan' ? 'new-scan-dir' : 'new-prot-dir';
+      document.getElementById(inputId).value = res.path;
+      addDir(type);
+    } else {
+      // User cancelled — no toast needed
+    }
+  } catch(e) {
+    toast('Folder picker error: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+function addDir(type) {
+  const inputId = type === 'scan' ? 'new-scan-dir' : 'new-prot-dir';
+  const inp = document.getElementById(inputId);
+  const v = inp.value.trim();
+  if (!v) return;
+  const dirs = getDirs(type);
+  if (type === 'prot') {
+    if (!dirs.some(d => d.path === v))
+      dirs.push({ path: v, inherit: false });  // default: exact dir only
+  } else {
+    if (!dirs.includes(v)) dirs.push(v);
+  }
+  renderDirs(type, dirs);
+  inp.value = '';
+}
+
+function removeDir(type, idx) {
+  const dirs = getDirs(type);
+  dirs.splice(idx, 1);
+  renderDirs(type, dirs);
+}
+
+/* ═══════════════════════════════════════════════════
+   Scan
+════════════════════════════════════════════════════ */
+async function startScan() {
+  const dirs = getDirs('scan');
+  if (!dirs.length) { toast('Add at least one directory in Configuration first.', 'err'); return; }
+
+  const btn = document.getElementById('btn-start-scan');
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning…';
+  clearTerminal('scan-log');
+
+  const usePlex = document.querySelector('input[name="scan-mode"]:checked').value === 'plex';
+  const res = await api('/api/scan/start', 'POST', {
+    directories: dirs,
+    use_sonarr: usePlex ? document.getElementById('plex-use-sonarr').checked
+                        : document.getElementById('use-sonarr').checked,
+    use_radarr: usePlex ? document.getElementById('plex-use-radarr').checked
+                        : document.getElementById('use-radarr').checked,
+    use_plex: usePlex,
+    scan_movies:    usePlex ? document.getElementById('plex-scan-movies').checked : true,
+    scan_shows:     usePlex ? document.getElementById('plex-scan-shows').checked  : true,
+    quality_pref:   usePlex ? (document.querySelector('input[name="quality-pref"]:checked')?.value || 'best') : 'best',
+    quality_target: document.getElementById('quality-target-res').value,
+  });
+  scanJobId = res.job_id;
+
+  streamJob(scanJobId, 'scan-log', () => {
+    btn.disabled = false;
+    btn.textContent = '🔍 Start Scan';
+    // Load results
+    api(`/api/job/${scanJobId}/result`).then(r => {
+      if (r.status === 'complete' && r.result) {
+        scanResults = r.result;
+        renderResults();
+        goTo('results');
+        toast(`Scan complete — ${r.result.length} duplicate groups found`);
+      } else if (r.error) {
+        toast('Scan error: ' + r.error, 'err');
+      }
+    });
+  });
+}
+
+function clearScan() {
+  clearTerminal('scan-log');
+  scanJobId = null;
+}
+
+/* ═══════════════════════════════════════════════════
+   Results
+════════════════════════════════════════════════════ */
+function renderResults() {
+  const empty   = document.getElementById('results-empty');
+  const content = document.getElementById('results-content');
+
+  if (!scanResults.length) { empty.style.display=''; content.style.display='none'; return; }
+
+  empty.style.display = 'none';
+  content.style.display = '';
+
+  // Stats
+  const totalGroups = scanResults.length;
+  const totalDupSize = scanResults.reduce((s,r) => s + r.total_duplicate_size, 0);
+  const totalDups = scanResults.reduce((s,r) => s + r.paths.filter(p => !p.is_official).length, 0);
+  const withOfficial = scanResults.filter(r => r.official_info).length;
+
+  document.getElementById('stats-bar').innerHTML = `
+    <div class="stat-item"><div class="val">${totalGroups}</div><div class="lbl">Dup Groups</div></div>
+    <div class="stat-item"><div class="val">${totalDups}</div><div class="lbl">Files to Review</div></div>
+    <div class="stat-item"><div class="val">${withOfficial}</div><div class="lbl">Matched to ✱arr</div></div>
+    <div class="stat-item"><div class="val">${fmtBytes(totalDupSize)}</div><div class="lbl">Recoverable</div></div>
+  `;
+  document.getElementById('group-count').textContent = `${totalGroups} duplicate group${totalGroups!==1?'s':''}`;
+
+  // Groups
+  const isPlex = scanResults.some(r => r.scan_mode === 'plex');
+  const container = document.getElementById('dup-groups');
+  container.innerHTML = scanResults.map((group, gi) => {
+    const srcBadge = group.scan_mode === 'plex'
+      ? `<span class="badge badge-plex">🎬 Plex</span>`
+      : group.official_info
+        ? `<span class="badge badge-${group.official_info.source.toLowerCase()}">${group.official_info.source}</span>`
+        : `<span class="badge badge-unknown">Unmatched</span>`;
+
+    const paths = group.paths.map((pd, pi) => {
+      const badgeClass = pd.is_official ? 'badge-official' : (pd.is_protected ? 'badge-protected' : 'badge-dup');
+      const qualPrefLabel = { best:'Best Quality', target:'Quality Pick', smallest:'Quality Pick' }[
+        document.querySelector('input[name="quality-pref"]:checked')?.value || 'best'
+      ];
+      const badgeText = pd.is_official
+        ? (pd.inferred_official ? `✓ ${qualPrefLabel}` : '✓ Official')
+        : (pd.is_protected ? '🛡 Protected' : 'Duplicate');
+      // Warning badge when quality preference demoted an arr-managed file
+      const arrOverrideBadge = pd.arr_override
+        ? `<span class="badge badge-arr-override" title="${pd.official_info?.source||'Arr'}-managed — demoted by quality preference">⚠️ ${pd.official_info?.source||'Arr'}-managed</span>`
+        : '';
+      const cbChecked = !pd.is_official && !pd.is_protected ? 'checked' : '';
+
+      // Resolution badge (Plex mode)
+      let resBadge = '';
+      if (pd.resolution) {
+        const res = pd.resolution.toLowerCase();
+        const cls = res === '4k' || res === '2160' ? 'badge-4k'
+                  : res === '1080' ? 'badge-1080'
+                  : res === '720'  ? 'badge-720'
+                  : 'badge-sd';
+        const label = res === '4k' || res === '2160' ? '4K'
+                    : res === '1080' ? '1080p'
+                    : res === '720'  ? '720p'
+                    : res.toUpperCase();
+        resBadge = `<span class="badge ${cls}">${label}</span>`;
+      }
+
+      // Codec + bitrate info
+      let qualityMeta = '';
+      if (pd.video_codec || pd.bitrate) {
+        const parts = [];
+        if (pd.video_codec) parts.push(pd.video_codec.toUpperCase());
+        if (pd.audio_codec) parts.push(pd.audio_codec.toUpperCase());
+        if (pd.bitrate)     parts.push(`${Math.round(pd.bitrate/1000)} Mbps`);
+        qualityMeta = ` · ${parts.join(' / ')}`;
+      }
+
+      // File count info (folder mode) or empty (plex mode uses single files)
+      const fileInfo = pd.video_count != null && !pd.resolution
+        ? ` · ${pd.video_count} video file${pd.video_count!==1?'s':''}`
+        : '';
+
+      return `<div class="path-row">
+        <input type="checkbox" class="dup-cb" data-gi="${gi}" data-pi="${pi}"
+          data-path="${esc(pd.path)}" ${pd.is_official || pd.is_protected ? 'disabled' : cbChecked}>
+        <div class="path-info">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+            <span class="badge ${badgeClass}">${badgeText}</span>
+            ${resBadge}
+            ${arrOverrideBadge}
+            ${pd.inferred_official && !pd.arr_override ? '<span class="badge badge-inferred" title="No Sonarr/Radarr match — selected by quality preference">inferred</span>' : ''}
+            ${!pd.exists ? '<span class="badge" style="background:#422006;color:#fb923c">Missing</span>' : ''}
+          </div>
+          <div class="path-text" onclick="openPath('${esc(pd.path)}')" title="Click to open in Explorer">${esc(pd.path)}</div>
+          <div class="path-stats">${pd.size_human}${fileInfo}${qualityMeta}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    return `<div class="dup-group" id="group-${gi}">
+      <div class="dup-header" onclick="toggleGroup(${gi})">
+        <span class="chevron">▶</span>
+        <span class="dup-name">${esc(group.folder_name)}</span>
+        ${srcBadge}
+        <span class="dup-meta">${group.paths.length} locations · ${group.total_duplicate_size_human} recoverable</span>
+      </div>
+      <div class="dup-body">${paths}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleGroup(gi) {
+  document.getElementById('group-' + gi).classList.toggle('open');
+}
+
+function selectAll() {
+  document.querySelectorAll('.dup-cb:not(:disabled)').forEach(cb => cb.checked = true);
+}
+
+function selectNone() {
+  document.querySelectorAll('.dup-cb:not(:disabled)').forEach(cb => cb.checked = false);
+}
+
+function getSelectedPaths() {
+  return Array.from(document.querySelectorAll('.dup-cb:not(:disabled):checked'))
+    .map(cb => cb.dataset.path);
+}
+
+function parseSize(s) {
+  if (!s) return 0;
+  const m = s.match(/^([\d.]+)\s*(b|kb|mb|gb|tb)?/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  const u = (m[2]||'b').toLowerCase();
+  return Math.round(n * ({b:1,kb:1024,mb:1048576,gb:1073741824,tb:1099511627776}[u]||1));
+}
+
+/* ═══════════════════════════════════════════════════
+   Cleanup mode selector
+════════════════════════════════════════════════════ */
+function setCleanupMode(mode) {
+  ['dry','recycle','delete'].forEach(m =>
+    document.getElementById('cpill-' + m).classList.toggle('selected', m === mode)
+  );
+  document.querySelector(`input[name="cleanup-mode"][value="${mode}"]`).checked = true;
+  const hints = {
+    dry:     'Simulates the cleanup — nothing is moved or deleted.',
+    recycle: 'Moves files to the Recycle Bin — recoverable if you change your mind.',
+    delete:  '⚠️ Permanently deletes files — cannot be undone.',
+  };
+  document.getElementById('cleanup-mode-hint').textContent = hints[mode];
+}
+
+/* ═══════════════════════════════════════════════════
+   Visual preview
+════════════════════════════════════════════════════ */
+function showPreview() {
+  const selectedSet = new Set(getSelectedPaths());
+  if (!scanResults.length) { toast('Run a scan first', 'err'); return; }
+
+  // Group all paths by their parent directory
+  const dirMap = new Map();
+  for (const group of scanResults) {
+    for (const pd of group.paths) {
+      const pathStr = pd.path;
+      // Determine parent: for files use parent dir, for dirs use the path itself
+      const isFile  = pathStr.match(/\.[a-z0-9]{2,5}$/i);
+      const parent  = isFile ? pathStr.substring(0, pathStr.lastIndexOf(/[\\/]/.test(pathStr) ? (pathStr.includes('\\') ? '\\' : '/') : '/') + 1)
+                             : pathStr;
+      // Simpler: split on last separator
+      const sep    = pathStr.includes('\\') ? '\\' : '/';
+      const parts  = pathStr.split(sep);
+      const dir    = parts.slice(0, -1).join(sep);
+      const file   = parts[parts.length - 1];
+      if (!dirMap.has(dir)) dirMap.set(dir, []);
+      dirMap.get(dir).push({ file, pd, group });
+    }
+  }
+
+  let html = '';
+  for (const [dir, entries] of [...dirMap.entries()].sort()) {
+    const hasAction = entries.some(e => selectedSet.has(e.pd.path) || e.pd.is_official);
+    if (!hasAction) continue;
+    html += `<div style="margin-bottom:14px">`;
+    html += `<div style="color:var(--muted);margin-bottom:2px">📁 ${esc(dir)}</div>`;
+    for (const { file, pd } of entries) {
+      const willDelete = selectedSet.has(pd.path);
+      const icon  = pd.is_official  ? '✅' : willDelete ? '🗑️' : '⬜';
+      const color = pd.is_official  ? 'var(--green)'
+                  : willDelete      ? 'var(--red)'
+                  : 'var(--muted)';
+      const label = pd.is_official  ? ' — KEEP'
+                  : willDelete      ? ' — REMOVE'
+                  : ' — skip (unselected)';
+      const size  = pd.size_human ? ` (${pd.size_human})` : '';
+      html += `<div style="padding-left:20px;color:${color}">${icon} ${esc(file)}${size}<span style="opacity:.6">${label}</span></div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (!html) html = '<div style="color:var(--muted)">No paths selected for removal.</div>';
+  document.getElementById('preview-tree').innerHTML = html;
+  document.getElementById('preview-section').style.display = '';
+  document.getElementById('preview-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+/* ═══════════════════════════════════════════════════
+   Cleanup
+════════════════════════════════════════════════════ */
+async function startCleanup() {
+  if (!scanJobId) { toast('Run a scan first', 'err'); return; }
+  const selected = getSelectedPaths();
+  if (!selected.length) { toast('No duplicate paths selected', 'err'); return; }
+
+  const mode    = document.querySelector('input[name="cleanup-mode"]:checked').value;
+  const dryRun  = mode === 'dry';
+  const recycle = mode === 'recycle';
+  const filter  = document.getElementById('filter-pattern').value.trim();
+  const minSz   = parseSize(document.getElementById('min-size').value.trim());
+
+  if (mode === 'recycle') {
+    const ok = confirm(
+      `♻️ RECYCLE BIN MODE\n\nThis will move ${selected.length} item${selected.length!==1?'s':''} to the Recycle Bin.\n\nYou can restore them from the Recycle Bin if needed.`
+    );
+    if (!ok) return;
+  }
+  if (mode === 'delete') {
+    const ok = confirm(
+      `⚠️ PERMANENT DELETE\n\nThis will PERMANENTLY delete ${selected.length} item${selected.length!==1?'s':''}.\n\nThis CANNOT be undone. Are you absolutely sure?`
+    );
+    if (!ok) return;
+  }
+
+  const btn = document.getElementById('btn-cleanup');
+  btn.disabled = true;
+  btn.textContent = '⏳ Cleaning…';
+
+  document.getElementById('cleanup-section').style.display = '';
+  clearTerminal('cleanup-log');
+
+  const res = await api('/api/cleanup/start', 'POST', {
+    scan_id:         scanJobId,
+    dry_run:         dryRun,
+    use_recycle_bin: recycle,
+    filter_pattern:  filter,
+    min_size_bytes:  minSz,
+    selected_paths:  selected,
+  });
+  cleanupJobId = res.job_id;
+
+  streamJob(cleanupJobId, 'cleanup-log', () => {
+    btn.disabled = false;
+    btn.textContent = '🧹 Run Cleanup';
+    api(`/api/job/${cleanupJobId}/result`).then(r => {
+      if (r.result) {
+        const s = r.result;
+        const verb = dryRun ? 'recoverable' : recycle ? 'recycled' : 'freed';
+        const label = dryRun ? 'Dry run complete' : recycle ? 'Recycled' : 'Deleted';
+        toast(`${label} — ${s.deleted} items · ${fmtBytes(s.space_saved)} ${verb}`);
+      }
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════
+   Logs
+════════════════════════════════════════════════════ */
+async function loadLogs() {
+  const logs = await api('/api/logs');
+  const el = document.getElementById('log-list');
+  if (!logs.length) {
+    el.innerHTML = '<div class="empty"><div class="icon">📭</div><p>No cleanup logs yet</p></div>';
+    return;
+  }
+  el.innerHTML = logs.map(l => `
+    <div class="log-entry">
+      <span class="log-name">${esc(l.name)}</span>
+      <span class="log-meta">${l.size_human}</span>
+      <button class="btn btn-ghost btn-sm" onclick="viewLog('${esc(l.name)}')">View</button>
+    </div>`).join('');
+}
+
+async function viewLog(name) {
+  const res = await fetch('/api/logs/' + encodeURIComponent(name));
+  const text = await res.text();
+  document.getElementById('log-viewer-title').textContent = name;
+  const el = document.getElementById('log-content');
+  el.innerHTML = text.split('\n').map(l => `<div class="line">${esc(l)}</div>`).join('');
+  document.getElementById('log-viewer').style.display = '';
+  el.scrollTop = 0;
+}
+
+function closeLogViewer() {
+  document.getElementById('log-viewer').style.display = 'none';
+}
+
+/* ═══════════════════════════════════════════════════
+   SSE streaming
+════════════════════════════════════════════════════ */
+function streamJob(jobId, terminalId, onDone) {
+  const term = document.getElementById(terminalId);
+  const es = new EventSource(`/api/job/${jobId}/events`);
+
+  es.onmessage = e => {
+    const data = JSON.parse(e.data);
+    if (data.msg === '__DONE__') { es.close(); onDone && onDone(); return; }
+    if (data.ping) return;
+    appendLine(term, data.msg);
+  };
+  es.onerror = () => { es.close(); onDone && onDone(); };
+}
+
+function appendLine(term, text) {
+  const line = document.createElement('div');
+  line.className = 'line';
+  if (text.includes('✅') || text.includes('Keeping')) line.classList.add('ok');
+  else if (text.includes('❌') || text.includes('Error')) line.classList.add('err');
+  else if (text.includes('⚠️') || text.includes('Warning')) line.classList.add('warn');
+  else if (text.includes('📡') || text.includes('📂') || text.includes('📊')) line.classList.add('info');
+  line.textContent = text.replace('__DONE__','');
+  term.appendChild(line);
+  term.scrollTop = term.scrollHeight;
+}
+
+function clearTerminal(id) {
+  document.getElementById(id).innerHTML = '';
+}
+
+/* ═══════════════════════════════════════════════════
+   API helper
+════════════════════════════════════════════════════ */
+async function api(url, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function val(id) { return document.getElementById(id).value.trim(); }
+function esc(s)  { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function fmtBytes(n) {
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length-1) { n /= 1024; i++; }
+  return n.toFixed(1) + ' ' + u[i];
+}
+
+/* ═══════════════════════════════════════════════════
+   Open in Explorer
+════════════════════════════════════════════════════ */
+async function openPath(path) {
+  try {
+    const res = await fetch('/api/open-path?path=' + encodeURIComponent(path));
+    const data = await res.json();
+    if (!data.ok) toast('Could not open: ' + (data.error || 'unknown error'), 'err');
+  } catch(e) {
+    toast('Explorer error: ' + e.message, 'err');
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   Init
+════════════════════════════════════════════════════ */
+loadConfig();
+</script>
+</body>
+</html>
