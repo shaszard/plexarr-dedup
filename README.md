@@ -9,6 +9,25 @@ Finds, previews, and safely removes duplicate movies and TV episodes — using P
 
 ---
 
+> [!WARNING]
+> **Hobby project — please read before using.**
+>
+> This tool was built by a non-developer and an AI (Claude) over a series of sessions,
+> driven by a real need and tested against one real media library with success.
+> It has **not** been audited, stress-tested across different setups, or validated by a
+> professional software engineer.
+>
+> - Always run a **Dry Run** first and review the results carefully.
+> - Use **Recycle Bin** mode rather than Permanent Delete until you're confident.
+> - Back up your `config.json` and verify your Sonarr/Radarr libraries after cleanup.
+> - The filename-mismatch detection is heuristic — it can produce false positives. Use
+>   **Force Stay** liberally if something looks wrong.
+>
+> Due diligence is your responsibility. The authors accept no liability for data loss.
+> That said — it worked a treat for us. Good luck! 🤞
+
+---
+
 ## Why does this exist?
 
 Existing deduplication tools work on file hashes or folder names.  
@@ -32,6 +51,10 @@ PlexArr Dedup uses **Plex's built-in duplicate detection** (the same engine that
 | 📁 **Orphan folder cleanup** | Automatically removes the parent folder when only companion files remain |
 | 📂 **Click-to-open paths** | Click any file path in results to open it in Explorer |
 | 📋 **Session logs** | Every cleanup run is logged to disk |
+| ⚠️ **Filename mismatch detection** | Catches files physically stored in the wrong show/movie folder |
+| 🗂️ **Directory-level mismatch grouping** | Identifies when an entire folder has been displaced, not just a single file |
+| 🔎 **Canonical path lookup** | Queries Sonarr/Radarr for where a misplaced title *should* live |
+| ✅ **Force Stay** | Confirms correctly-placed files back into the dedup queue without moving them |
 
 ---
 

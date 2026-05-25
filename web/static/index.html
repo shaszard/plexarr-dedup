@@ -104,6 +104,22 @@ h3{font-size:15px;font-weight:600;color:#fff;margin-bottom:12px}
 .badge-plex{background:#1a1040;color:#e5c8ff}
 .badge-inferred{background:#1c1a05;color:#fcd34d}
 .badge-arr-override{background:#3d2200;color:#fb923c}
+.badge-mismatch{background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444}
+.mismatch-alert{background:#1c0505;border:2px solid var(--red);border-radius:10px;padding:18px 22px;margin-bottom:18px}
+.mismatch-alert-title{color:var(--red);font-size:15px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.mismatch-alert p{font-size:12px;color:#fca5a5;margin-bottom:10px;line-height:1.6}
+.mismatch-alert ul{margin:0;padding-left:18px;font-size:12px;color:#fca5a5;line-height:2}
+.mismatch-alert li strong{color:#fff}
+.mismatch-entry{background:rgba(255,255,255,.04);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:12px 14px;margin-bottom:8px}
+.mismatch-entry:last-child{margin-bottom:0}
+.mm-dir-entry{border-color:rgba(245,158,11,.4)!important;background:rgba(245,158,11,.04)!important}
+.mm-dir-header{font-size:13px;font-weight:600;margin-bottom:6px;display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;color:#fff}
+.mm-footer{margin-top:10px;padding-top:10px;border-top:1px solid rgba(239,68,68,.2);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mm-suggestion{margin-top:8px}
+.mm-loading{font-size:12px;color:var(--muted);display:block;animation:pulse 1.5s infinite}
+.mm-move-label{display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-top:4px;padding:8px 10px;background:rgba(108,99,255,.1);border:1px solid rgba(108,99,255,.3);border-radius:6px;transition:background .15s}
+.mm-move-label:hover{background:rgba(108,99,255,.18)}
+.mm-move-label input{margin-top:3px;flex-shrink:0}
 .badge-4k{background:#1a1a3e;color:#a78bfa}
 .badge-1080{background:#0f2a1a;color:#4ade80}
 .badge-720{background:#2a200a;color:#fbbf24}
@@ -506,6 +522,9 @@ h3{font-size:15px;font-weight:600;color:#fff;margin-bottom:12px}
       <div class="terminal" id="cleanup-log"></div>
     </div>
 
+    <!-- Mismatch alert panel (shown when filename doesn't match group title) -->
+    <div id="mismatch-alert-panel" style="display:none"></div>
+
     <!-- Duplicate groups -->
     <div class="select-row">
       <span id="group-count" style="font-size:13px;color:var(--muted)"></span>
@@ -541,6 +560,7 @@ h3{font-size:15px;font-weight:600;color:#fff;margin-bottom:12px}
 let scanJobId    = null;
 let cleanupJobId = null;
 let scanResults  = [];
+let mismatchList = [];   // populated by renderResults(), consumed by loadMismatchSuggestions()
 
 /* ═══════════════════════════════════════════════════
    Navigation
@@ -781,6 +801,40 @@ function clearScan() {
 }
 
 /* ═══════════════════════════════════════════════════
+   Name-mismatch detection
+════════════════════════════════════════════════════ */
+const MISMATCH_STOP = new Set([
+  'the','a','an','and','of','in','to','for','with','on','at',
+  'from','by','as','is','are','was','were','its','de','vs','s','dc'
+]);
+
+function extractTitleWords(groupTitle) {
+  // TV titles: "Show Name — S01E01 — Episode Title" — use show part only
+  const showPart = groupTitle.split('—')[0].trim();
+  return showPart
+    .replace(/\(\d{4}\)/g, '')         // strip year
+    .replace(/s\d+e\d+/gi, '')         // strip S01E01
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')  // punctuation → space
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !MISMATCH_STOP.has(w));
+}
+
+function filenameMatchesTitle(filePath, titleWords) {
+  if (!titleWords.length) return true;  // can't check — assume OK
+  // Check ONLY the filename and its immediate parent folder, not the full path.
+  // The full path can contain the correct show name as a parent directory even
+  // when the file itself belongs to a completely different title.
+  const norm  = filePath.replace(/\\/g, '/');
+  const parts = norm.split('/').filter(Boolean);
+  const check = [parts[parts.length - 1] || '', parts[parts.length - 2] || '']
+    .join(' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .toLowerCase();
+  return titleWords.some(w => check.includes(w));
+}
+
+/* ═══════════════════════════════════════════════════
    Results
 ════════════════════════════════════════════════════ */
 function renderResults() {
@@ -808,13 +862,18 @@ function renderResults() {
 
   // Groups
   const isPlex = scanResults.some(r => r.scan_mode === 'plex');
-  const container = document.getElementById('dup-groups');
-  container.innerHTML = scanResults.map((group, gi) => {
+  const container  = document.getElementById('dup-groups');
+  const alertPanel = document.getElementById('mismatch-alert-panel');
+  const mismatches = [];   // collect name-mismatch paths during render
+
+  const groupsHtml = scanResults.map((group, gi) => {
     const srcBadge = group.scan_mode === 'plex'
       ? `<span class="badge badge-plex">🎬 Plex</span>`
       : group.official_info
         ? `<span class="badge badge-${group.official_info.source.toLowerCase()}">${group.official_info.source}</span>`
         : `<span class="badge badge-unknown">Unmatched</span>`;
+
+    const titleWords = extractTitleWords(group.folder_name);
 
     const paths = group.paths.map((pd, pi) => {
       const badgeClass = pd.is_official ? 'badge-official' : (pd.is_protected ? 'badge-protected' : 'badge-dup');
@@ -828,7 +887,14 @@ function renderResults() {
       const arrOverrideBadge = pd.arr_override
         ? `<span class="badge badge-arr-override" title="${pd.official_info?.source||'Arr'}-managed — demoted by quality preference">⚠️ ${pd.official_info?.source||'Arr'}-managed</span>`
         : '';
-      const cbChecked = !pd.is_official && !pd.is_protected ? 'checked' : '';
+
+      // Name-mismatch: filename/parent folder doesn't match the group title
+      const isMismatch = !pd.is_official && !pd.is_protected
+        && titleWords.length > 0
+        && !filenameMatchesTitle(pd.path, titleWords);
+      if (isMismatch) mismatches.push({ groupName: group.folder_name, path: pd.path, gi, pi });
+
+      const cbChecked = !pd.is_official && !pd.is_protected && !isMismatch ? 'checked' : '';
 
       // Resolution badge (Plex mode)
       let resBadge = '';
@@ -870,6 +936,7 @@ function renderResults() {
             ${arrOverrideBadge}
             ${pd.inferred_official && !pd.arr_override ? '<span class="badge badge-inferred" title="No Sonarr/Radarr match — selected by quality preference">inferred</span>' : ''}
             ${!pd.exists ? '<span class="badge" style="background:#422006;color:#fb923c">Missing</span>' : ''}
+            ${isMismatch ? '<span class="badge badge-mismatch">⚠️ Name Mismatch</span>' : ''}
           </div>
           <div class="path-text" onclick="openPath('${esc(pd.path)}')" title="Click to open in Explorer">${esc(pd.path)}</div>
           <div class="path-stats">${pd.size_human}${fileInfo}${qualityMeta}</div>
@@ -887,10 +954,292 @@ function renderResults() {
       <div class="dup-body">${paths}</div>
     </div>`;
   }).join('');
+
+  container.innerHTML = groupsHtml;
+
+  // Render mismatch alert panel — group files by shared parent directory
+  if (mismatches.length) {
+    // Build grouped list: entries sharing a parent dir become one card
+    const parentMap = new Map();
+    for (const m of mismatches) {
+      const norm   = m.path.replace(/\\/g, '/');
+      const parent = norm.split('/').slice(0, -1).join('/');
+      if (!parentMap.has(parent)) parentMap.set(parent, []);
+      parentMap.get(parent).push(m);
+    }
+    // mismatchList is now an array of groups, not individual files
+    mismatchList = [...parentMap.entries()].map(([parentPath, entries]) => ({
+      parentPath,
+      entries,                    // [{groupName, path, gi, pi}, ...]
+      isDir: entries.length > 1,  // multiple files → whole directory displaced
+    }));
+
+    const totalPaths  = mismatches.length;
+    const totalGroups = mismatchList.length;
+
+    alertPanel.innerHTML = `<div class="mismatch-alert">
+      <div class="mismatch-alert-title">🚨 Filename Mismatch Detected — ${totalPaths} path${totalPaths!==1?'s':''} across ${totalGroups} location${totalGroups!==1?'s':''}</div>
+      <p>Files whose names don't match their scan group have been <strong>automatically unchecked</strong>.
+      Directory-level mismatches (amber) likely mean an entire folder ended up in the wrong place — fix those manually in Explorer.
+      Use <strong>Force Stay</strong> if a file really is correctly placed and should go back into the dedup queue.</p>
+      <div id="mismatch-entries">${mismatchList.map((grp, i) => {
+        const folderName    = grp.parentPath.split('/').pop();
+        const grandParents  = grp.parentPath.split('/').slice(-3, -1).join('/');
+        const groupNames    = [...new Set(grp.entries.map(e => e.groupName))];
+        const groupLabel    = groupNames.slice(0,2).map(n => `<em>${esc(n)}</em>`).join(', ')
+                            + (groupNames.length > 2 ? ` +${groupNames.length-2} more` : '');
+        return `
+        <div class="mismatch-entry${grp.isDir ? ' mm-dir-entry' : ''}" id="mm-entry-${i}">
+          ${grp.isDir ? `
+            <div class="mm-dir-header">📁 ${esc(folderName)}
+              <span style="font-size:11px;font-weight:400;color:var(--muted)">(inside …/${esc(grandParents)}/)</span>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">
+              ${grp.entries.length} files misidentified under: ${groupLabel}
+            </div>
+          ` : `
+            <div style="margin-bottom:4px">
+              <span style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Listed under</span>
+              <strong style="color:#fff;margin-left:6px">${esc(grp.entries[0].groupName)}</strong>
+            </div>
+            <div style="font-family:monospace;font-size:12px;color:#fca5a5;word-break:break-all">${esc(grp.entries[0].path)}</div>
+          `}
+          <div class="mm-suggestion" id="mm-sug-${i}">
+            <span class="mm-loading">🔍 ${grp.isDir ? 'Looking up canonical location in Sonarr/Radarr…' : 'Searching Plex for a matching title…'}</span>
+          </div>
+          <div class="mm-footer">
+            <button class="btn btn-ghost btn-sm" onclick="confirmMismatchInPlace(${i})">
+              ✓ Force Stay — ${grp.isDir ? `add all ${grp.entries.length} files` : 'add file'} back to dedup queue
+            </button>
+          </div>
+        </div>`;
+      }).join('')}
+      </div>
+      <div id="mm-apply-row" style="margin-top:16px;display:none;align-items:center;gap:12px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="applyMismatchMoves()">↪️ Apply Selected Moves</button>
+        <span id="mm-apply-status" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+    </div>`;
+    alertPanel.style.display = '';
+    loadMismatchSuggestions();
+  } else {
+    mismatchList = [];
+    alertPanel.style.display = 'none';
+  }
 }
 
 function toggleGroup(gi) {
   document.getElementById('group-' + gi).classList.toggle('open');
+}
+
+/* ═══════════════════════════════════════════════════
+   Mismatch suggestions
+════════════════════════════════════════════════════ */
+async function loadMismatchSuggestions() {
+  await Promise.all(mismatchList.map(async (grp, i) => {
+    const sugEl = document.getElementById(`mm-sug-${i}`);
+    if (!sugEl) return;
+
+    // Use the first file in the group as the query representative
+    const queryPath = grp.entries[0].path;
+
+    try {
+      const res = await api('/api/suggest-title?path=' + encodeURIComponent(queryPath));
+
+      if (res.error) {
+        sugEl.innerHTML = `<span style="font-size:12px;color:var(--muted);display:block;margin-top:4px">⚠️ ${esc(res.error)}</span>`;
+        return;
+      }
+
+      if (grp.isDir) {
+        // ── Directory group: show canonical path + Explorer buttons ──────────
+        if (res.suggestion) {
+          const srcLabel = res.target_source ? `<span style="font-size:11px;background:rgba(108,99,255,.2);padding:1px 6px;border-radius:4px;margin-left:6px">${esc(res.target_source)}</span>` : '';
+          const tgtHtml  = res.target_dir
+            ? `<div style="font-size:12px;color:var(--text);margin-top:6px">
+                 Canonical path: <span style="font-family:monospace">${esc(res.target_dir)}</span>${srcLabel}
+               </div>
+               <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                 <button class="btn btn-ghost btn-sm" onclick="openPath('${esc(grp.parentPath)}')">📂 Open displaced folder</button>
+                 <button class="btn btn-ghost btn-sm" onclick="openPath('${esc(res.target_dir)}')">📂 Open correct location</button>
+               </div>
+               <div style="font-size:11px;color:var(--muted);margin-top:6px">Move the folder manually in Explorer, then re-scan to clear this alert.</div>`
+            : `<div style="font-size:12px;color:var(--muted);margin-top:4px">Title identified but no path found — check Sonarr/Radarr configuration.</div>
+               <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="openPath('${esc(grp.parentPath)}')">📂 Open displaced folder</button>`;
+          sugEl.innerHTML = `<div style="font-size:13px;margin-top:4px">Identified as <strong>"${esc(res.suggestion)}"</strong></div>${tgtHtml}`;
+        } else {
+          sugEl.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-top:4px">No match found in Plex — investigate manually or use Force Stay if correct.
+            <br><button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="openPath('${esc(grp.parentPath)}')">📂 Open folder in Explorer</button></div>`;
+        }
+
+      } else {
+        // ── Individual file: suggest move or offer manual input ──────────────
+        if (res.suggestion && res.target_dir) {
+          const lowConf = res.confidence < 0.5;
+          sugEl.innerHTML = `
+            <label class="mm-move-label">
+              <input type="checkbox" class="mm-move-cb"
+                data-src="${esc(queryPath)}" data-tgt="${esc(res.target_dir)}">
+              <span>
+                Do you mean <strong>"${esc(res.suggestion)}"</strong>?
+                <br><span style="font-size:11px;color:var(--muted)">Will move → ${esc(res.target_dir)}</span>
+                ${lowConf ? '<br><span style="font-size:11px;color:var(--yellow)">⚠️ Low-confidence — double-check before applying</span>' : ''}
+              </span>
+            </label>
+            ${mmManualInput(i, queryPath, 'Or specify a different destination:')}`;
+          document.getElementById('mm-apply-row').style.display = 'flex';
+        } else {
+          sugEl.innerHTML = `
+            <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:6px">
+              No similar title found in Plex — specify destination manually, or use Force Stay if correctly placed:
+            </div>
+            ${mmManualInput(i, queryPath, null)}`;
+        }
+      }
+    } catch(e) {
+      sugEl.innerHTML = `<span style="font-size:12px;color:var(--red);display:block;margin-top:4px">Lookup failed: ${esc(e.message)}</span>`;
+    }
+  }));
+}
+
+/** Build the manual-destination row used in both "no match" and "override" cases */
+function mmManualInput(idx, srcPath, label) {
+  const labelHtml = label
+    ? `<div style="font-size:11px;color:var(--muted);margin-top:10px;margin-bottom:4px">${esc(label)}</div>`
+    : '';
+  return `${labelHtml}
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+      <button class="btn btn-ghost btn-sm" id="mm-browse-btn-${idx}"
+        onclick="browseForMove(${idx})">📂 Browse…</button>
+      <input type="text" id="mm-force-path-${idx}"
+        data-src="${esc(srcPath)}" data-idx="${idx}"
+        placeholder="Paste or browse to destination folder"
+        style="flex:1;min-width:180px;background:var(--bg);border:1px solid var(--border);
+               border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px"
+        oninput="updateForceMoveState(this)">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" class="mm-move-cb" id="mm-force-cb-${idx}"
+          data-src="${esc(srcPath)}" data-tgt="" disabled>
+        Move to this folder
+      </label>
+    </div>`;
+}
+
+/** Called by Browse button in a manual-input row */
+async function browseForMove(idx) {
+  const btn = document.getElementById(`mm-browse-btn-${idx}`);
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+  try {
+    const res = await api('/api/pick-folder');
+    if (res.path) {
+      const input = document.getElementById(`mm-force-path-${idx}`);
+      if (input) { input.value = res.path; updateForceMoveState(input); }
+    }
+  } catch(e) {
+    toast('Folder picker error: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText || '📂 Browse…'; }
+  }
+}
+
+/** Enables/disables the force-move checkbox as the user types a destination */
+function updateForceMoveState(input) {
+  const idx = input.dataset.idx;
+  const cb  = document.getElementById(`mm-force-cb-${idx}`);
+  if (!cb) return;
+  const tgt = input.value.trim();
+  cb.dataset.tgt = tgt;
+  cb.disabled = !tgt;
+  if (tgt) document.getElementById('mm-apply-row').style.display = 'flex';
+}
+
+/** Force Stay: file(s) are correctly placed — re-check them in the main results */
+function confirmMismatchInPlace(idx) {
+  const grp = mismatchList[idx];
+  if (!grp) return;
+
+  let restored = 0;
+  for (const m of grp.entries) {
+    const cb = document.querySelector(`.dup-cb[data-gi="${m.gi}"][data-pi="${m.pi}"]`);
+    if (cb) {
+      cb.disabled = false;
+      cb.checked  = true;
+      // Remove the ⚠️ Name Mismatch badge from this path row
+      cb.closest('.path-row')?.querySelector('.badge-mismatch')?.remove();
+      restored++;
+    }
+  }
+
+  // Mark this alert entry as resolved
+  const entry = document.getElementById(`mm-entry-${idx}`);
+  if (entry) {
+    entry.dataset.resolved = '1';
+    const label = grp.isDir
+      ? grp.parentPath.split('/').pop()
+      : grp.entries[0].path.split(/[\\/]/).pop();
+    entry.innerHTML = `<div style="color:var(--green);font-size:12px;padding:2px 0">
+      ✅ Force Stay — <strong>${esc(label)}</strong>
+      — ${restored} file${restored!==1?'s':''} restored to dedup queue</div>`;
+  }
+
+  toast(`${restored} file${restored!==1?'s':''} added back to dedup queue`, 'ok');
+
+  // Hide the whole panel once every entry is resolved
+  if (mismatchList.every((_, i) =>
+    document.getElementById(`mm-entry-${i}`)?.dataset.resolved === '1')) {
+    document.getElementById('mismatch-alert-panel').style.display = 'none';
+  }
+}
+
+async function applyMismatchMoves() {
+  const checks = Array.from(document.querySelectorAll('.mm-move-cb:checked'));
+  if (!checks.length) { toast('No moves selected', 'err'); return; }
+
+  const btn = document.querySelector('[onclick="applyMismatchMoves()"]');
+  const status = document.getElementById('mm-apply-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Moving…';
+  status.textContent = '';
+
+  let ok = 0, fail = 0;
+
+  for (const cb of checks) {
+    const src = cb.dataset.src;
+    const tgt = cb.dataset.tgt;
+    try {
+      const res = await api('/api/move-file', 'POST', { source: src, target_dir: tgt });
+      if (res.ok) {
+        ok++;
+        cb.disabled = true;
+        const label = cb.closest('label');
+        if (label) label.style.opacity = '0.5';
+        const sugEl = cb.closest('.mm-suggestion');
+        if (sugEl) {
+          const notice = document.createElement('div');
+          notice.style.cssText = 'font-size:12px;color:var(--green);margin-top:4px';
+          notice.textContent = `✅ Moved → ${res.new_path}`;
+          sugEl.appendChild(notice);
+        }
+      } else {
+        fail++;
+        const fname = src.split(/[\\/]/).pop();
+        toast(`Failed to move ${fname}: ${res.error}`, 'err', 6000);
+      }
+    } catch(e) {
+      fail++;
+      toast(`Error: ${e.message}`, 'err');
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↪️ Apply Selected Moves';
+  if (ok) {
+    status.textContent = `${ok} moved${fail ? `, ${fail} failed` : ''} — re-scan to refresh results`;
+    toast(`${ok} file${ok!==1?'s':''} moved successfully — re-scan when ready`, 'ok', 6000);
+  } else if (fail) {
+    status.textContent = `${fail} move${fail!==1?'s':''} failed`;
+  }
 }
 
 function selectAll() {

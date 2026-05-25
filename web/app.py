@@ -5,6 +5,7 @@ FastAPI backend with real-time progress via Server-Sent Events
 """
 
 import os
+import re
 import sys
 import stat
 import json
@@ -78,6 +79,10 @@ class ProtectedDirEntry(BaseModel):
 
 class ProtectedDirsPayload(BaseModel):
     protected_dirs: List[ProtectedDirEntry]
+
+class MoveFileRequest(BaseModel):
+    source: str
+    target_dir: str
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 DEFAULTS = {
@@ -314,6 +319,37 @@ def _pick_best(files: list, quality_pref: str, quality_target: str) -> dict:
 
     # "best" (default)
     return max(files, key=lambda f: (f["res_rank"], f["size"]))
+
+
+_TITLE_STOP = {
+    'the','a','an','and','of','in','to','for','with','on','at',
+    'from','by','as','is','are','was','were','its','de','vs','s','dc',
+}
+
+def _title_similarity(query: str, title: str) -> float:
+    """
+    Word-overlap similarity between a filename/folder query string and a Plex title.
+    Returns 0.0–1.0: fraction of *non-trivial* query words that appear in the title.
+    E.g. "The Magicians S01E01 Pilot" → words {"magicians","pilot"}
+         matched against title "The Magicians" → words {"magicians"} → 0.5
+    """
+    def words(s: str):
+        return {
+            w for w in re.sub(r'[^a-z0-9]', ' ', s.lower()).split()
+            if len(w) > 1 and w not in _TITLE_STOP
+            and not re.fullmatch(r's\d{1,2}e\d{1,2}', w)   # strip S01E01 codes
+            and not re.fullmatch(r'\d{4}', w)               # strip years
+        }
+    q = words(query)
+    t = words(title)
+    if not q or not t:
+        return 0.0
+    # Key insight: the query is a noisy filename string (many words) while the
+    # Plex title is clean (few words).  We want to know "does the filename contain
+    # all/most of the title's meaningful words?" — so denominator is len(t).
+    # e.g. title="Hawkeye" (1 word), filename has "hawkeye" buried among 15 others
+    # → 1/1 = 1.0  (correct)   vs old formula 1/15 = 0.06  (wrong, fails threshold)
+    return len(q & t) / len(t)
 
 
 def fetch_plex_duplicates(url: str, token: str, official_paths: dict,
@@ -987,6 +1023,205 @@ async def open_path(path: str):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+# Suggest a matching Plex title for a mismatched file path
+@app.get("/api/suggest-title")
+async def suggest_title(path: str):
+    """
+    Given a mismatched file path, find the best Plex title match and return
+    the canonical Sonarr/Radarr path as the target — which is authoritative
+    regardless of where Plex happens to have the files indexed.
+    Falls back to the Plex-reported Location / episode path.
+    """
+    cfg      = load_config()
+    plex_cfg = cfg.get("plex", {})
+    if not plex_cfg.get("token") or not plex_cfg.get("url"):
+        return {"suggestion": None, "error": "Plex not configured — add token in Configuration"}
+
+    p          = Path(path)
+    query      = f"{p.stem} {p.parent.name}"
+    src_parent = str(p.parent).lower()   # used to skip misplaced episode files
+
+    base  = plex_cfg["url"].rstrip("/")
+    token = plex_cfg["token"]
+
+    try:
+        libraries = fetch_plex_libraries(base, token)
+    except Exception as e:
+        return {"suggestion": None, "error": f"Could not connect to Plex: {e}"}
+
+    best_score    = 0.0
+    best_title    = None
+    best_clean    = None   # title without year, used for arr lookup
+    best_plex_dir = None
+    best_type     = None
+
+    for lib in libraries:
+        media_type = "1" if lib["type"] == "movie" else "2"
+        try:
+            data  = plex_get(base, token, f"/library/sections/{lib['id']}/all",
+                             {"type": media_type})
+            items = data.get("MediaContainer", {}).get("Metadata", [])
+        except Exception:
+            continue
+
+        for item in items:
+            title = item.get("title", "")
+            year  = item.get("year", "")
+            score = _title_similarity(query, title)
+            if score <= best_score:
+                continue
+
+            # Fix duplicate-year: only append year if not already in title string
+            if year and f"({year})" in title:
+                display_title = title
+            else:
+                display_title = f"{title} ({year})" if year else title
+
+            # Resolve Plex on-disk path (used only as fallback; arr path preferred)
+            plex_dir = None
+            if lib["type"] == "movie":
+                for media in item.get("Media", []):
+                    for part in media.get("Part", []):
+                        fp = part.get("file", "")
+                        if fp:
+                            plex_dir = str(Path(fp).parent)
+                            break
+                    if plex_dir:
+                        break
+            else:
+                # 1. Use the show's Location field — this is the show root
+                locations = item.get("Location", [])
+                if locations:
+                    plex_dir = locations[0].get("path")
+
+                # 2. Fall back to episode files, but SKIP any that live inside
+                #    the same folder as the source file (those are the misplaced ones)
+                if not plex_dir:
+                    rating_key = item.get("ratingKey")
+                    if rating_key:
+                        try:
+                            ep_data = plex_get(base, token,
+                                               f"/library/metadata/{rating_key}/allLeaves",
+                                               {"X-Plex-Container-Size": "10",
+                                                "X-Plex-Container-Start": "0"})
+                            eps = ep_data.get("MediaContainer", {}).get("Metadata", [])
+                            for ep in eps:
+                                for media in ep.get("Media", []):
+                                    for part in media.get("Part", []):
+                                        fp = part.get("file", "")
+                                        if not fp:
+                                            continue
+                                        ep_path = Path(fp)
+                                        # Skip if this episode is inside the displaced folder
+                                        if str(ep_path.parent).lower() == src_parent:
+                                            continue
+                                        parent_nm = ep_path.parent.name.lower()
+                                        if re.match(r'^(season|s\d)', parent_nm):
+                                            plex_dir = str(ep_path.parent.parent)
+                                        else:
+                                            plex_dir = str(ep_path.parent)
+                                        break
+                                if plex_dir:
+                                    break
+                        except Exception:
+                            pass
+
+            best_score    = score
+            best_title    = display_title
+            best_clean    = title
+            best_type     = lib["type"]
+            best_plex_dir = plex_dir
+
+    MIN_CONFIDENCE = 0.3
+    if best_score < MIN_CONFIDENCE or not best_title:
+        return {"suggestion": None, "confidence": round(best_score, 2)}
+
+    # ── Prefer Sonarr / Radarr canonical path ────────────────────────────────
+    # Arr's DB records where the show *should* be, regardless of where Plex has
+    # the files indexed — critical when all files are displaced to another folder.
+    arr_dir    = None
+    arr_source = None
+
+    if best_type == "show":
+        sonarr_cfg = cfg.get("sonarr", {})
+        if sonarr_cfg.get("api_key"):
+            try:
+                s_data   = fetch_arr(sonarr_cfg["url"], sonarr_cfg["api_key"], "series")
+                best_arr = 0.0
+                for _key, info in s_data.items():
+                    s = _title_similarity(info["title"], best_clean)
+                    if s > best_arr:
+                        best_arr   = s
+                        arr_dir    = info["path"]
+                        arr_source = "Sonarr"
+            except Exception:
+                pass
+    elif best_type == "movie":
+        radarr_cfg = cfg.get("radarr", {})
+        if radarr_cfg.get("api_key"):
+            try:
+                r_data   = fetch_arr(radarr_cfg["url"], radarr_cfg["api_key"], "movie")
+                best_arr = 0.0
+                for _key, info in r_data.items():
+                    s = _title_similarity(info["title"], best_clean)
+                    if s > best_arr:
+                        best_arr   = s
+                        arr_dir    = info["path"]
+                        arr_source = "Radarr"
+            except Exception:
+                pass
+
+    return {
+        "suggestion":    best_title,
+        "target_dir":    arr_dir or best_plex_dir,
+        "target_source": arr_source or ("Plex" if best_plex_dir else None),
+        "confidence":    round(best_score, 2),
+        "type":          best_type,
+    }
+
+
+# Move a single file to a different directory (mismatch fix)
+@app.post("/api/move-file")
+async def move_file_endpoint(req: MoveFileRequest):
+    """
+    Move a single file to `target_dir`, then run orphan-folder cleanup on
+    the source directory.  Respects protected directories.
+    """
+    protected = load_protected()
+    src     = Path(req.source)
+    tgt_dir = Path(req.target_dir)
+
+    if not src.exists():
+        return {"ok": False, "error": "Source file not found"}
+    if not src.is_file():
+        return {"ok": False, "error": "Source must be a file, not a directory"}
+    if is_path_protected(src, protected):
+        return {"ok": False, "error": "Source is in a protected directory — unprotect it first"}
+    if not tgt_dir.exists():
+        return {"ok": False, "error": f"Target directory does not exist: {tgt_dir}"}
+    if not tgt_dir.is_dir():
+        return {"ok": False, "error": "Target path is not a directory"}
+
+    tgt = tgt_dir / src.name
+    if tgt.exists():
+        return {"ok": False, "error": f"A file named '{src.name}' already exists in the target folder"}
+
+    try:
+        shutil.move(str(src), str(tgt))
+        # Clean up the now-possibly-empty source folder
+        cfg       = load_config()
+        scan_dirs = {str(Path(d)) for d in cfg.get("scan_directories", [])}
+        _remove_orphan_dir(src, scan_dirs, protected,
+                           dry_run=False, emit=lambda _: None, log_lines=[],
+                           use_recycle_bin=False)
+        return {"ok": True, "new_path": str(tgt)}
+    except PermissionError as e:
+        hint = " (try running as administrator)" if getattr(e, "winerror", None) == 5 else ""
+        return {"ok": False, "error": f"Permission denied{hint}: {e}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 
 # Logs
 @app.get("/api/logs")
